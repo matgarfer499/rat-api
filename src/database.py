@@ -15,10 +15,10 @@ metadata = MetaData(naming_convention=POSTGRES_INDEXES_NAMING_CONVENTION)
 Base = declarative_base(metadata=metadata)
 
 # Database configuration
-# Change to your DATABASE_URL
 DATABASE_URL = "sqlite+aiosqlite:///./test.db"  # For development with SQLite
 # DATABASE_URL = "postgresql+asyncpg://user:password@localhost/dbname"  # For production with PostgreSQL
 
+# Async engine for FastAPI endpoints
 engine = create_async_engine(DATABASE_URL, echo=True)
 async_session_maker = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
