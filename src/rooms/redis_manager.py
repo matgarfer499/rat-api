@@ -4,7 +4,7 @@ import secrets
 import time
 from typing import Optional, List, Dict
 from src.redis.client import redis_client
-from src.rooms.models import Room, Player, RoomSettings, RoomPhase
+from src.rooms.models import Room, Player, RoomSettings, RoomPhase, GameState, GameResult
 
 
 class RoomManager:
@@ -76,13 +76,19 @@ class RoomManager:
             for player_id, player_json in players_data.items()
         }
         
+        # Parse game_state if present
+        game_state = None
+        game_state_json = room_data.get("game_state")
+        if game_state_json:
+            game_state = GameState(**json.loads(game_state_json))
+        
         room_dict = {
             "id": room_data["id"],
             "host_id": room_data["host_id"],
             "settings": json.loads(room_data["settings"]),
             "phase": room_data["phase"],
             "players": players,
-            "word": room_data.get("word"),
+            "game_state": game_state,
             "round_number": int(room_data.get("round_number", 0)),
             "created_at": float(room_data["created_at"])
         }
@@ -103,7 +109,7 @@ class RoomManager:
             "host_id": room.host_id,
             "settings": json.dumps(room.settings.dict()),
             "phase": room.phase.value,
-            "word": room.word or "",
+            "game_state": json.dumps(room.game_state.dict()) if room.game_state else "",
             "round_number": str(room.round_number),
             "created_at": str(room.created_at)
         }

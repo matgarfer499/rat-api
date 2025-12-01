@@ -7,15 +7,22 @@ from pydantic import BaseModel, Field, validator
 class RoomPhase(str, Enum):
     """Game phases."""
     WAITING = "waiting"
-    HINTS = "hints"
-    VOTING = "voting"
-    RESULTS = "results"
+    ROLE_REVEAL = "role_reveal"  # 10 seconds to see role and word
+    PLAYING = "playing"          # 5 minutes discussion
+    VOTING = "voting"            # 30 seconds to vote
+    RESULTS = "results"          # Show winner
 
 
 class PlayerRole(str, Enum):
     """Player roles in the game."""
     CIVILIAN = "civilian"
     IMPOSTOR = "impostor"
+
+
+class GameResult(str, Enum):
+    """Game result."""
+    CIVILIANS_WIN = "civilians_win"
+    IMPOSTOR_WINS = "impostor_wins"
 
 
 class Player(BaseModel):
@@ -25,9 +32,10 @@ class Player(BaseModel):
     user_id: Optional[int] = None  # None for guest players
     is_ready: bool = False
     role: Optional[PlayerRole] = None
-    hint: Optional[str] = None
+    word: Optional[str] = None  # The word this player sees (None for impostor)
     vote: Optional[str] = None  # player_id they voted for
     is_host: bool = False
+    wants_to_vote: bool = False  # Player requested voting phase
     
     def dict(self, *args, **kwargs):
         """Convert to dict with enum values."""
@@ -45,6 +53,16 @@ class RoomSettings(BaseModel):
     password: Optional[str] = None
 
 
+class GameState(BaseModel):
+    """Game state for an active game."""
+    word: str  # The word for civilians
+    impostor_id: str  # player_id of the impostor
+    phase_start_time: float  # timestamp when current phase started
+    votes_submitted: int = 0
+    result: Optional[GameResult] = None
+    most_voted_id: Optional[str] = None  # player_id of most voted
+
+
 class Room(BaseModel):
     """Game room state."""
     id: str
@@ -52,7 +70,7 @@ class Room(BaseModel):
     settings: RoomSettings
     phase: RoomPhase = RoomPhase.WAITING
     players: Dict[str, Player] = {}  # player_id -> Player
-    word: Optional[str] = None
+    game_state: Optional[GameState] = None
     round_number: int = 0
     created_at: float
     
@@ -61,6 +79,10 @@ class Room(BaseModel):
         d = super().dict(*args, **kwargs)
         d['phase'] = self.phase.value
         d['players'] = {k: v.dict() for k, v in self.players.items()}
+        if self.game_state:
+            d['game_state'] = self.game_state.dict()
+            if self.game_state.result:
+                d['game_state']['result'] = self.game_state.result.value
         return d
 
 
