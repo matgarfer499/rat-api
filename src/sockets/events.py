@@ -274,6 +274,78 @@ async def update_username(sid, data):
 
 
 @sio.event
+async def toggle_ready(sid, data):
+    """
+    Toggle player ready status.
+    
+    Expected data:
+    {
+        "room_id": "abc123"
+    }
+    """
+    try:
+        logger.debug(f"✅ toggle_ready event from sid={sid}")
+        
+        if sid not in sessions:
+            await sio.emit('error', {'message': 'No session found'}, room=sid)
+            return
+        
+        session = sessions[sid]
+        room_id = session.get('room_id')
+        player_id = session.get('player_id')
+        username = session.get('username')
+        
+        if not room_id or not player_id:
+            await sio.emit('error', {'message': 'Not in a room'}, room=sid)
+            return
+        
+        # Get current room state
+        room = await RoomManager.get_room(room_id)
+        if not room:
+            await sio.emit('error', {'message': 'Room not found'}, room=sid)
+            return
+        
+        if player_id not in room.players:
+            await sio.emit('error', {'message': 'Player not in room'}, room=sid)
+            return
+        
+        # Toggle ready status
+        current_ready = room.players[player_id].is_ready
+        new_ready = not current_ready
+        
+        # Update in Redis
+        room = await RoomManager.update_player(room_id, player_id, is_ready=new_ready)
+        
+        if not room:
+            await sio.emit('error', {'message': 'Failed to update ready status'}, room=sid)
+            return
+        
+        logger.info(f"{'✅' if new_ready else '⏸️'} {username} is now {'ready' if new_ready else 'not ready'} in room {room_id}")
+        
+        # Broadcast updated room state to all players
+        await sio.emit('room_state', room.dict(), room=room_id)
+        
+        # Also emit specific event for ready change
+        await sio.emit('player_ready_changed', {
+            'player_id': player_id,
+            'username': username,
+            'is_ready': new_ready
+        }, room=room_id)
+        
+        # Publish to Redis for cross-instance sync
+        await _publish_event('player_ready_changed', {
+            'room_id': room_id,
+            'player_id': player_id,
+            'username': username,
+            'is_ready': new_ready
+        })
+        
+    except Exception as e:
+        logger.exception(f"❌ Error in toggle_ready: {e}")
+        await sio.emit('error', {'message': str(e)}, room=sid)
+
+
+@sio.event
 async def game_event(sid, data):
     """
     Broadcast a game event to the room.
