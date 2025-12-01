@@ -3,6 +3,7 @@ from typing import List
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from src.categories.models import Category, CategoryTranslation
 from src.categories.schemas import (
@@ -30,14 +31,20 @@ async def create_category(
     return db_category
 
 
-@router.get("/", response_model=List[CategoryResponse])
+@router.get("/", response_model=List[CategoryWithTranslations])
 async def list_categories(
+    language: str = "es",
     skip: int = 0,
     limit: int = 100,
     db: AsyncSession = Depends(get_db)
 ):
-    """List all categories."""
-    result = await db.execute(select(Category).offset(skip).limit(limit))
+    """List all categories with translations."""
+    result = await db.execute(
+        select(Category)
+        .options(selectinload(Category.translations))
+        .offset(skip)
+        .limit(limit)
+    )
     categories = result.scalars().all()
     return categories
 
@@ -49,7 +56,9 @@ async def get_category(
 ):
     """Get a category by ID with all its translations."""
     result = await db.execute(
-        select(Category).where(Category.id == category_id)
+        select(Category)
+        .options(selectinload(Category.translations))
+        .where(Category.id == category_id)
     )
     category = result.scalar_one_or_none()
     
