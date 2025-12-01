@@ -1,7 +1,7 @@
 """Room and player models for multiplayer game."""
 from enum import Enum
 from typing import Optional, List, Dict
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, validator
 
 
 class RoomPhase(str, Enum):
@@ -72,6 +72,15 @@ class CreateRoomRequest(BaseModel):
     max_players: int = Field(default=8, ge=3, le=12)
     is_public: bool = True
     password: Optional[str] = None
+    
+    @validator('password', always=True)
+    def validate_password(cls, v, values):
+        is_public = values.get('is_public', True)
+        if not is_public and not v:
+            raise ValueError('Private rooms must have a password')
+        if is_public and v:
+            raise ValueError('Public rooms cannot have a password')
+        return v
 
 
 class JoinRoomRequest(BaseModel):

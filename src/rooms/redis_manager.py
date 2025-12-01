@@ -186,6 +186,17 @@ class RoomManager:
         return room
     
     @staticmethod
+    async def update_player_username(room_id: str, player_id: str, new_username: str) -> Optional[Room]:
+        """Update a player's username."""
+        room = await RoomManager.get_room(room_id)
+        if not room or player_id not in room.players:
+            return None
+        
+        room.players[player_id].username = new_username
+        await RoomManager.update_room(room)
+        return room
+    
+    @staticmethod
     async def get_public_rooms() -> List[Dict]:
         """Get list of public rooms."""
         redis = redis_client.client

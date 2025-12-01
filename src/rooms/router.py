@@ -91,9 +91,12 @@ async def join_room_rest(room_id: str, request: JoinRoomRequest):
         if not room:
             raise HTTPException(status_code=404, detail="Room not found")
         
-        # Check password
-        if room.settings.password and room.settings.password != request.password:
-            raise HTTPException(status_code=403, detail="Invalid password")
+        # Check password for private rooms
+        if not room.settings.is_public:
+            if not request.password:
+                raise HTTPException(status_code=403, detail="Password required for private room")
+            if room.settings.password != request.password:
+                raise HTTPException(status_code=403, detail="Invalid password")
         
         # Check capacity
         if len(room.players) >= room.settings.max_players:
@@ -110,6 +113,34 @@ async def join_room_rest(room_id: str, request: JoinRoomRequest):
             "room_id": room_id,
             "player_id": player_id,
             "message": "Ready to join via WebSocket"
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/{room_id}/check")
+async def check_room(room_id: str):
+    """
+    Check if a room exists and if it requires a password.
+    Used before showing join form to determine if password is needed.
+    """
+    try:
+        room = await RoomManager.get_room(room_id)
+        if not room:
+            raise HTTPException(status_code=404, detail="Room not found")
+        
+        return {
+            "room_id": room_id,
+            "exists": True,
+            "is_public": room.settings.is_public,
+            "requires_password": not room.settings.is_public,
+            "player_count": len(room.players),
+            "max_players": room.settings.max_players,
+            "phase": room.phase.value,
+            "category_id": room.settings.category_id
         }
         
     except HTTPException:
