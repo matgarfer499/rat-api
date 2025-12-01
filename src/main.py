@@ -1,4 +1,5 @@
 from contextlib import asynccontextmanager
+import asyncio
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -8,13 +9,31 @@ from src.categories.router import router as categories_router
 from src.database import init_db
 from src.game.router import router as game_router
 from src.words.router import router as words_router
+from src.rooms.router import router as rooms_router
+from src.redis.client import redis_client
+from src.sockets.redis_listener import redis_listener
+from src.logging_config import setup_logging, get_logger
+
+# Initialize logging
+setup_logging()
+logger = get_logger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Initialize database on application startup."""
+    """Initialize database and Redis on application startup."""
     await init_db()
+    
+    # Connect to Redis
+    await redis_client.connect()
+    
+    # Start Redis Pub/Sub listener in background
+    asyncio.create_task(redis_listener())
+    
     yield
+    
+    # Cleanup on shutdown
+    await redis_client.disconnect()
 
 
 app = FastAPI(
@@ -38,6 +57,11 @@ app.include_router(auth_router)
 app.include_router(categories_router)
 app.include_router(words_router)
 app.include_router(game_router)
+app.include_router(rooms_router)
+
+# Mount Socket.IO ASGI app
+from src.sockets.server import socket_app
+app.mount("/socket.io", socket_app)
 
 
 @app.get("/")
