@@ -80,18 +80,20 @@ async def join_room(sid, data):
         
         logger.debug(f"🔍 Room found: {room.id}, current players: {len(room.players)}")
         
-        # Check password
-        if room.settings.password and room.settings.password != password:
-            await sio.emit('error', {'message': 'Invalid password'}, room=sid)
-            return
-        
-        # Check if player already exists in room (reconnecting or host joining via WS)
+        # Check if player is already in room (host or reconnecting)
         existing_player = None
         for pid, p in room.players.items():
             if p.username == username:
                 existing_player = (pid, p)
                 logger.debug(f"🔍 Found existing player: {pid} ({username})")
                 break
+        
+        # Only check password for NEW players (not host or reconnecting players)
+        if not existing_player:
+            if room.settings.password and room.settings.password != password:
+                logger.warning(f"❌ Invalid password for room {room_id}")
+                await sio.emit('error', {'message': 'Invalid password'}, room=sid)
+                return
         
         if existing_player:
             # Player already exists - just reconnect
@@ -198,6 +200,77 @@ async def leave_room(sid, data):
         
     except Exception as e:
         logger.exception(f"❌ Error in leave_room: {e}")
+
+
+@sio.event
+async def update_username(sid, data):
+    """
+    Update player username in room.
+    
+    Expected data:
+    {
+        "room_id": "abc123",
+        "new_username": "NewName"
+    }
+    """
+    try:
+        logger.debug(f"✏️ update_username event from sid={sid}")
+        
+        if sid not in sessions:
+            await sio.emit('error', {'message': 'No session found'}, room=sid)
+            return
+        
+        session = sessions[sid]
+        room_id = session.get('room_id')
+        player_id = session.get('player_id')
+        old_username = session.get('username')
+        new_username = data.get('new_username', '').strip()
+        
+        if not new_username:
+            await sio.emit('error', {'message': 'Username cannot be empty'}, room=sid)
+            return
+        
+        if len(new_username) > 20:
+            await sio.emit('error', {'message': 'Username too long (max 20 characters)'}, room=sid)
+            return
+        
+        if not room_id or not player_id:
+            await sio.emit('error', {'message': 'Not in a room'}, room=sid)
+            return
+        
+        # Update username in Redis
+        room = await RoomManager.update_player_username(room_id, player_id, new_username)
+        
+        if not room:
+            await sio.emit('error', {'message': 'Failed to update username'}, room=sid)
+            return
+        
+        # Update session
+        sessions[sid]['username'] = new_username
+        
+        logger.info(f"✏️ {old_username} changed username to {new_username} in room {room_id}")
+        
+        # Broadcast updated room state to all players
+        await sio.emit('room_state', room.dict(), room=room_id)
+        
+        # Also emit specific event for username change
+        await sio.emit('username_changed', {
+            'player_id': player_id,
+            'old_username': old_username,
+            'new_username': new_username
+        }, room=room_id)
+        
+        # Publish to Redis for cross-instance sync
+        await _publish_event('username_changed', {
+            'room_id': room_id,
+            'player_id': player_id,
+            'old_username': old_username,
+            'new_username': new_username
+        })
+        
+    except Exception as e:
+        logger.exception(f"❌ Error in update_username: {e}")
+        await sio.emit('error', {'message': str(e)}, room=sid)
 
 
 @sio.event
