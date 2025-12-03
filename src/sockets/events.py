@@ -130,11 +130,8 @@ async def join_room(sid, data):
             # Add player to room
             await RoomManager.add_player(room_id, player)
             logger.debug(f"🔍 Player added to room successfully")
-            
-            # Notify room about new player
-            await _broadcast_player_joined(room_id, player_id, username)
         
-        # Join Socket.IO room
+        # Join Socket.IO room FIRST (before any broadcasts)
         await sio.enter_room(sid, room_id)
         logger.debug(f"🔍 Player {player_id} entered Socket.IO room {room_id}")
         
@@ -145,15 +142,12 @@ async def join_room(sid, data):
             'username': username
         }
         
-        # Send current room state to this player
+        # Get updated room state from Redis
         updated_room = await RoomManager.get_room(room_id)
         if updated_room:
-            logger.debug(f"📤 Sending room_state to sid {sid}: {len(updated_room.players)} players")
-            await sio.emit('room_state', updated_room.dict(), room=sid)
-            
-            # Broadcast to ALL players in room (including this one)
-            logger.debug(f"📤 Broadcasting room_state to entire room {room_id}")
-            await sio.emit('room_state', updated_room.dict(), room=room_id, skip_sid=sid)
+            # Broadcast to ALL players in room (including the new one)
+            logger.debug(f"📤 Broadcasting room_state to entire room {room_id}: {len(updated_room.players)} players")
+            await sio.emit('room_state', updated_room.dict(), room=room_id)
         else:
             logger.warning(f"⚠️ Could not get updated room {room_id}")
         
