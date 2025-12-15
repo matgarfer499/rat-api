@@ -13,6 +13,7 @@ from src.rooms.router import router as rooms_router
 from src.redis.client import redis_client
 from src.sockets.redis_listener import redis_listener
 from src.logging_config import setup_logging, get_logger
+from src.seed import seed_if_empty
 
 # Initialize logging
 setup_logging()
@@ -23,6 +24,9 @@ logger = get_logger(__name__)
 async def lifespan(app: FastAPI):
     """Initialize database and Redis on application startup."""
     await init_db()
+    
+    # Auto-seed if database is empty
+    await seed_if_empty()
     
     # Connect to Redis
     await redis_client.connect()
@@ -43,10 +47,10 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# Configure CORS
+# Configure CORS - Allow all origins for development/ngrok
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
