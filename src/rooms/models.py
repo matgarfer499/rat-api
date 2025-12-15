@@ -73,6 +73,9 @@ class Room(BaseModel):
     game_state: Optional[GameState] = None
     round_number: int = 0
     created_at: float
+    # Cache to avoid repetition between games
+    last_word: Optional[str] = None  # Last word used (to avoid repetition)
+    last_starting_player_id: Optional[str] = None  # Last player who started (to avoid repetition)
     
     def dict(self, *args, **kwargs):
         """Convert to dict with enum values."""
