@@ -19,30 +19,46 @@ PLAYING_DURATION = 300     # 5 minutes for discussion
 VOTING_DURATION = 30       # 30 seconds to vote
 
 
-async def get_random_word(category_id: int, language: str = "es") -> Optional[str]:
-    """Get a random word from the specified category."""
+async def get_random_word(category_id: int, language: str = "es", exclude_word: Optional[str] = None) -> Optional[str]:
+    """Get a random word from the specified category, optionally excluding a word."""
     async with async_session_maker() as db:
-        # Get a random word from the category
+        # Get a few random words from the category to filter from
         query = (
             select(Word)
             .where(Word.category_id == category_id)
             .order_by(func.random())
-            .limit(1)
+            .limit(5)
         )
         
         result = await db.execute(query)
-        word = result.scalar_one_or_none()
+        words = result.scalars().all()
         
-        if not word:
+        if not words:
             logger.warning(f"No words found in category {category_id}")
             return None
         
-        # Get translation
+        # Find a word that's not excluded
+        for word in words:
+            translation_query = select(WordTranslation).where(
+                WordTranslation.word_id == word.id,
+                WordTranslation.language == language
+            )
+            
+            translation_result = await db.execute(translation_query)
+            translation = translation_result.scalar_one_or_none()
+            
+            if translation:
+                # Check if should be excluded
+                if exclude_word and translation.value.lower() == exclude_word.lower():
+                    continue  # Skip, try next word
+                return translation.value
+        
+        # If all words were excluded, fallback to first one
+        word = words[0]
         translation_query = select(WordTranslation).where(
             WordTranslation.word_id == word.id,
             WordTranslation.language == language
         )
-        
         translation_result = await db.execute(translation_query)
         translation = translation_result.scalar_one_or_none()
         
@@ -53,16 +69,29 @@ async def get_random_word(category_id: int, language: str = "es") -> Optional[st
         return translation.value
 
 
-def assign_roles(players: List[Player]) -> Tuple[List[Player], str]:
+def assign_roles(players: List[Player], exclude_player_id: Optional[str] = None) -> Tuple[List[Player], str]:
     """
     Assign roles to players. One impostor, rest are civilians.
+    Optionally excludes a player from being selected as impostor (to avoid repetition).
     Returns updated players list and the impostor_id.
     """
     if len(players) < 3:
         raise ValueError("Need at least 3 players to start game")
     
-    # Randomly select impostor
-    impostor_index = random.randint(0, len(players) - 1)
+    # Filter out excluded player if possible
+    available_indices = list(range(len(players)))
+    if exclude_player_id and len(players) > 1:
+        for i, player in enumerate(players):
+            if player.id == exclude_player_id:
+                available_indices.remove(i)
+                break
+    
+    # If no available indices (shouldn't happen), use all
+    if not available_indices:
+        available_indices = list(range(len(players)))
+    
+    # Randomly select impostor from available
+    impostor_index = random.choice(available_indices)
     impostor_id = players[impostor_index].id
     
     for i, player in enumerate(players):
@@ -82,8 +111,9 @@ async def start_game(room: Room, language: str = "es") -> Optional[Room]:
     """
     Start a new game in the room.
     - Assign roles (1 impostor, rest civilians)
-    - Get random word
+    - Get random word (avoiding last word)
     - Set phase to ROLE_REVEAL
+    Uses room.last_word and room.last_starting_player_id to avoid repetition.
     """
     logger.info(f"🎮 Starting game in room {room.id}")
     
@@ -93,14 +123,21 @@ async def start_game(room: Room, language: str = "es") -> Optional[Room]:
         logger.warning(f"Not enough players in room {room.id}: {len(players_list)}")
         return None
     
-    # Get random word for the category
-    word = await get_random_word(room.settings.category_id, language)
+    # Get random word for the category, excluding last word
+    word = await get_random_word(
+        room.settings.category_id, 
+        language, 
+        exclude_word=room.last_word
+    )
     if not word:
         logger.error(f"Could not get word for room {room.id}")
         return None
     
-    # Assign roles
-    updated_players, impostor_id = assign_roles(players_list)
+    # Assign roles, excluding last impostor/starting player
+    updated_players, impostor_id = assign_roles(
+        players_list, 
+        exclude_player_id=room.last_starting_player_id
+    )
     
     # Assign word to civilians
     for player in updated_players:
@@ -109,10 +146,12 @@ async def start_game(room: Room, language: str = "es") -> Optional[Room]:
         else:
             player.word = None  # Impostor doesn't see the word
     
-    # Update room
+    # Update room with cache
     room.players = {p.id: p for p in updated_players}
     room.phase = RoomPhase.ROLE_REVEAL
     room.round_number += 1
+    room.last_word = word  # Cache for next game
+    room.last_starting_player_id = impostor_id  # Cache for next game
     room.game_state = GameState(
         word=word,
         impostor_id=impostor_id,
@@ -122,7 +161,7 @@ async def start_game(room: Room, language: str = "es") -> Optional[Room]:
     
     await RoomManager.update_room(room)
     
-    logger.info(f"🎮 Game started in room {room.id}: word='{word}', impostor={impostor_id}")
+    logger.info(f"🎮 Game started in room {room.id}: word='{word}', impostor={impostor_id} (excluded last: word='{room.last_word}', player='{room.last_starting_player_id}')")
     
     return room
 
