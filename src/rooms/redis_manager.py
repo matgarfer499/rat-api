@@ -218,7 +218,7 @@ class RoomManager:
                     "id": room.id,
                     "player_count": len(room.players),
                     "max_players": room.settings.max_players,
-                    "category_id": room.settings.category_id
+                    "category_ids": room.settings.category_ids
                 })
         
         return rooms

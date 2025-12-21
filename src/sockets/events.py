@@ -495,7 +495,15 @@ async def start_game(sid, data):
     Expected data:
     {
         "room_id": "abc123",
-        "language": "es"  # optional, defaults to "es"
+        "language": "es",  # optional, defaults to "es"
+        "category_ids": [1, 2, 3],  # optional, overrides room settings
+        "settings": {
+            "detective_enabled": false,
+            "joker_enabled": false,
+            "voting_time": 60,
+            "discussion_timer_enabled": false,
+            "discussion_time": 300
+        }
     }
     """
     try:
@@ -535,6 +543,24 @@ async def start_game(sid, data):
             await sio.emit('error', {'message': 'All players must be ready'}, room=sid)
             return
         
+        # Update room settings from host's choices
+        if 'category_ids' in data:
+            room.settings.category_ids = data['category_ids']
+        elif 'category_id' in data:
+            # Backwards compatibility
+            room.settings.category_ids = [data['category_id']]
+        
+        settings = data.get('settings', {})
+        if settings:
+            room.settings.detective_enabled = settings.get('detective_enabled', False)
+            room.settings.joker_enabled = settings.get('joker_enabled', False)
+            room.settings.voting_time = settings.get('voting_time', 60)
+            room.settings.discussion_timer_enabled = settings.get('discussion_timer_enabled', False)
+            room.settings.discussion_time = settings.get('discussion_time', 300)
+        
+        # Save updated settings before starting game
+        await RoomManager.update_room(room)
+        
         # Start game
         language = data.get('language', 'es')
         room = await logic_start_game(room, language)
@@ -543,7 +569,7 @@ async def start_game(sid, data):
             await sio.emit('error', {'message': 'Failed to start game'}, room=sid)
             return
         
-        logger.info(f"🎮 Game started in room {room_id}")
+        logger.info(f"🎮 Game started in room {room_id} with detective={room.settings.detective_enabled}, joker={room.settings.joker_enabled}")
         
         # Send personalized room state to each player (with their role/word)
         await _broadcast_personalized_game_state(room)

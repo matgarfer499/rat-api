@@ -32,7 +32,7 @@ async def create_room(request: CreateRoomRequest):
         # Create room settings
         settings = RoomSettings(
             max_players=request.max_players,
-            category_id=request.category_id,
+            category_ids=request.category_ids,
             is_public=request.is_public,
             password=request.password
         )
@@ -140,7 +140,7 @@ async def check_room(room_id: str):
             "player_count": len(room.players),
             "max_players": room.settings.max_players,
             "phase": room.phase.value,
-            "category_id": room.settings.category_id
+            "category_ids": room.settings.category_ids
         }
         
     except HTTPException:
