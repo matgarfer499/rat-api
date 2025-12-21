@@ -14,18 +14,18 @@ from src.logging_config import get_logger
 logger = get_logger(__name__)
 
 # Game timing constants (in seconds)
-ROLE_REVEAL_DURATION = 10  # 10 seconds to see role/word
-PLAYING_DURATION = 300     # 5 minutes for discussion
-VOTING_DURATION = 30       # 30 seconds to vote
+ROLE_REVEAL_DURATION = 10
+PLAYING_DURATION = 300
+VOTING_DURATION = 30
 
 
-async def get_random_word(category_id: int, language: str = "es", exclude_word: Optional[str] = None) -> Optional[str]:
-    """Get a random word from the specified category, optionally excluding a word."""
+async def get_random_word(category_ids: List[int], language: str = "es", exclude_word: Optional[str] = None) -> Optional[str]:
+    """Get a random word from the specified categories, optionally excluding a word."""
     async with async_session_maker() as db:
-        # Get a few random words from the category to filter from
+        # Get a few random words from any of the categories
         query = (
             select(Word)
-            .where(Word.category_id == category_id)
+            .where(Word.category_id.in_(category_ids))
             .order_by(func.random())
             .limit(5)
         )
@@ -34,7 +34,7 @@ async def get_random_word(category_id: int, language: str = "es", exclude_word: 
         words = result.scalars().all()
         
         if not words:
-            logger.warning(f"No words found in category {category_id}")
+            logger.warning(f"No words found in categories {category_ids}")
             return None
         
         # Find a word that's not excluded
@@ -69,34 +69,61 @@ async def get_random_word(category_id: int, language: str = "es", exclude_word: 
         return translation.value
 
 
-def assign_roles(players: List[Player], exclude_player_id: Optional[str] = None) -> Tuple[List[Player], str]:
+def assign_roles(
+    players: List[Player], 
+    exclude_player_id: Optional[str] = None,
+    detective_enabled: bool = False,
+    joker_enabled: bool = False
+) -> Tuple[List[Player], str, Optional[str], Optional[str]]:
     """
-    Assign roles to players. One impostor, rest are civilians.
+    Assign roles to players. One impostor, optionally detective and joker, rest are civilians.
     Optionally excludes a player from being selected as impostor (to avoid repetition).
-    Returns updated players list and the impostor_id.
+    Returns (updated_players, impostor_id, detective_id, joker_id).
     """
     if len(players) < 3:
         raise ValueError("Need at least 3 players to start game")
     
-    # Filter out excluded player if possible
+    # Create list of available player indices
     available_indices = list(range(len(players)))
+    
+    # Filter out excluded player for impostor selection if possible
+    impostor_pool = available_indices.copy()
     if exclude_player_id and len(players) > 1:
         for i, player in enumerate(players):
             if player.id == exclude_player_id:
-                available_indices.remove(i)
+                impostor_pool.remove(i)
                 break
     
-    # If no available indices (shouldn't happen), use all
-    if not available_indices:
-        available_indices = list(range(len(players)))
+    if not impostor_pool:
+        impostor_pool = available_indices.copy()
     
-    # Randomly select impostor from available
-    impostor_index = random.choice(available_indices)
+    # Select impostor
+    impostor_index = random.choice(impostor_pool)
     impostor_id = players[impostor_index].id
+    available_indices.remove(impostor_index)
     
+    # Select detective if enabled and enough players
+    detective_id = None
+    if detective_enabled and available_indices:
+        detective_index = random.choice(available_indices)
+        detective_id = players[detective_index].id
+        available_indices.remove(detective_index)
+    
+    # Select joker if enabled and enough players
+    joker_id = None
+    if joker_enabled and available_indices:
+        joker_index = random.choice(available_indices)
+        joker_id = players[joker_index].id
+        available_indices.remove(joker_index)
+    
+    # Assign roles to all players
     for i, player in enumerate(players):
-        if i == impostor_index:
+        if player.id == impostor_id:
             player.role = PlayerRole.IMPOSTOR
+        elif player.id == detective_id:
+            player.role = PlayerRole.DETECTIVE
+        elif player.id == joker_id:
+            player.role = PlayerRole.JOKER
         else:
             player.role = PlayerRole.CIVILIAN
         # Reset game-specific fields
@@ -104,13 +131,13 @@ def assign_roles(players: List[Player], exclude_player_id: Optional[str] = None)
         player.wants_to_vote = False
         player.is_ready = False
     
-    return players, impostor_id
+    return players, impostor_id, detective_id, joker_id
 
 
 async def start_game(room: Room, language: str = "es") -> Optional[Room]:
     """
     Start a new game in the room.
-    - Assign roles (1 impostor, rest civilians)
+    - Assign roles (1 impostor, optionally detective/joker, rest civilians)
     - Get random word (avoiding last word)
     - Set phase to ROLE_REVEAL
     Uses room.last_word and room.last_starting_player_id to avoid repetition.
@@ -123,9 +150,9 @@ async def start_game(room: Room, language: str = "es") -> Optional[Room]:
         logger.warning(f"Not enough players in room {room.id}: {len(players_list)}")
         return None
     
-    # Get random word for the category, excluding last word
+    # Get random word from categories, excluding last word
     word = await get_random_word(
-        room.settings.category_id, 
+        room.settings.category_ids, 
         language, 
         exclude_word=room.last_word
     )
@@ -134,34 +161,45 @@ async def start_game(room: Room, language: str = "es") -> Optional[Room]:
         return None
     
     # Assign roles, excluding last impostor/starting player
-    updated_players, impostor_id = assign_roles(
+    updated_players, impostor_id, detective_id, joker_id = assign_roles(
         players_list, 
-        exclude_player_id=room.last_starting_player_id
+        exclude_player_id=room.last_starting_player_id,
+        detective_enabled=room.settings.detective_enabled,
+        joker_enabled=room.settings.joker_enabled
     )
     
-    # Assign word to civilians
+    # Assign word to everyone except impostor
     for player in updated_players:
-        if player.role == PlayerRole.CIVILIAN:
-            player.word = word
-        else:
+        if player.role == PlayerRole.IMPOSTOR:
             player.word = None  # Impostor doesn't see the word
+        else:
+            player.word = word  # Civilians, detective, and joker see the word
+    
+    # Select random starting player (excluding last starting player)
+    eligible_starters = [p.id for p in updated_players if p.id != room.last_starting_player_id]
+    if not eligible_starters:
+        eligible_starters = [p.id for p in updated_players]
+    starting_player_id = random.choice(eligible_starters)
     
     # Update room with cache
     room.players = {p.id: p for p in updated_players}
     room.phase = RoomPhase.ROLE_REVEAL
     room.round_number += 1
     room.last_word = word  # Cache for next game
-    room.last_starting_player_id = impostor_id  # Cache for next game
+    room.last_starting_player_id = starting_player_id  # Cache for next game
     room.game_state = GameState(
         word=word,
         impostor_id=impostor_id,
+        detective_id=detective_id,
+        joker_id=joker_id,
+        starting_player_id=starting_player_id,
         phase_start_time=time.time(),
         votes_submitted=0
     )
     
     await RoomManager.update_room(room)
     
-    logger.info(f"🎮 Game started in room {room.id}: word='{word}', impostor={impostor_id} (excluded last: word='{room.last_word}', player='{room.last_starting_player_id}')")
+    logger.info(f"🎮 Game started in room {room.id}: word='{word}', impostor={impostor_id}, detective={detective_id}, joker={joker_id}")
     
     return room
 
