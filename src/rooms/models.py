@@ -17,6 +17,8 @@ class PlayerRole(str, Enum):
     """Player roles in the game."""
     CIVILIAN = "civilian"
     IMPOSTOR = "impostor"
+    DETECTIVE = "detective"
+    JOKER = "joker"
 
 
 class GameResult(str, Enum):
@@ -48,15 +50,24 @@ class Player(BaseModel):
 class RoomSettings(BaseModel):
     """Room configuration."""
     max_players: int = Field(default=8, ge=3, le=12)
-    category_id: int
+    category_ids: List[int] = Field(default_factory=lambda: [1])  # Support multiple categories
     is_public: bool = True
     password: Optional[str] = None
+    # Game settings
+    detective_enabled: bool = False
+    joker_enabled: bool = False
+    voting_time: int = Field(default=60, ge=15, le=180)
+    discussion_timer_enabled: bool = False
+    discussion_time: int = Field(default=300, ge=60, le=600)
 
 
 class GameState(BaseModel):
     """Game state for an active game."""
     word: str  # The word for civilians
     impostor_id: str  # player_id of the impostor
+    detective_id: Optional[str] = None  # player_id of detective (if enabled)
+    joker_id: Optional[str] = None  # player_id of joker (if enabled)
+    starting_player_id: str  # player_id of the player who starts
     phase_start_time: float  # timestamp when current phase started
     votes_submitted: int = 0
     result: Optional[GameResult] = None
@@ -93,7 +104,7 @@ class Room(BaseModel):
 class CreateRoomRequest(BaseModel):
     """Request to create a new room."""
     username: str
-    category_id: int
+    category_ids: List[int] = Field(default_factory=lambda: [1])  # Support multiple categories
     max_players: int = Field(default=8, ge=3, le=12)
     is_public: bool = True
     password: Optional[str] = None
@@ -131,7 +142,7 @@ class PublicRoom(BaseModel):
     id: str
     player_count: int
     max_players: int
-    category_id: int
+    category_ids: List[int]
 
 
 # Socket.IO event data models
