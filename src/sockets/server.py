@@ -19,6 +19,9 @@ socket_app = socketio.ASGIApp(
     socketio_path='socket.io'
 )
 
-# Import events to register handlers - THIS IS CRITICAL!
-from src.sockets import events  # noqa: F401, E402
+# Import event modules to register handlers - THIS IS CRITICAL!
+from src.sockets import connection_events  # noqa: F401, E402
+from src.sockets import room_events  # noqa: F401, E402
+from src.sockets import player_events  # noqa: F401, E402
+from src.sockets import game_events  # noqa: F401, E402
 logger.info("✅ Socket.IO event handlers registered!")
