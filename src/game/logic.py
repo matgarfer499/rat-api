@@ -19,15 +19,25 @@ PLAYING_DURATION = 300
 VOTING_DURATION = 30
 
 
-async def get_random_word(category_ids: List[int], language: str = "es", exclude_word: Optional[str] = None) -> Optional[str]:
-    """Get a random word from the specified categories, optionally excluding a word."""
+async def get_random_word(
+        category_ids: List[int], 
+        language: str = "es", 
+        exclude_word: Optional[str] = None) -> Optional[dict]:
+    """
+    Get a random word from the specified categories in the requested language.
+    
+    This is optimized to avoid fetching all words - it uses SQL RANDOM() to select one word.
+    Optionally excludes a specific word to avoid repetition between games.
+    
+    Returns a dict with word_id, word_key, word_value, category_id, language or None if not found.
+    """
     async with async_session_maker() as db:
-        # Get a few random words from any of the categories
+        # Get a random word from the selected categories
         query = (
             select(Word)
             .where(Word.category_id.in_(category_ids))
             .order_by(func.random())
-            .limit(5)
+            .limit(5)  # Get a few options to filter from
         )
         
         result = await db.execute(query)
@@ -38,35 +48,46 @@ async def get_random_word(category_ids: List[int], language: str = "es", exclude
             return None
         
         # Find a word that's not excluded
+        selected_word = None
+        selected_translation = None
         for word in words:
+            # Get translation for this word
             translation_query = select(WordTranslation).where(
                 WordTranslation.word_id == word.id,
                 WordTranslation.language == language
             )
-            
             translation_result = await db.execute(translation_query)
             translation = translation_result.scalar_one_or_none()
             
             if translation:
-                # Check if should be excluded
+                # Check if this word should be excluded
                 if exclude_word and translation.value.lower() == exclude_word.lower():
-                    continue  # Skip, try next word
-                return translation.value
+                    continue  # Skip this word, try next
+                selected_word = word
+                selected_translation = translation
+                break
         
-        # If all words were excluded, fallback to first one
-        word = words[0]
-        translation_query = select(WordTranslation).where(
-            WordTranslation.word_id == word.id,
-            WordTranslation.language == language
-        )
-        translation_result = await db.execute(translation_query)
-        translation = translation_result.scalar_one_or_none()
+        # If all words were excluded (unlikely), just use the first one
+        if not selected_word:
+            selected_word = words[0]
+            translation_query = select(WordTranslation).where(
+                WordTranslation.word_id == selected_word.id,
+                WordTranslation.language == language
+            )
+            translation_result = await db.execute(translation_query)
+            selected_translation = translation_result.scalar_one_or_none()
+            
+            if not selected_translation:
+                logger.warning(f"No translation found for word {selected_word.id} in language {language}")
+                return None
         
-        if not translation:
-            logger.warning(f"No translation found for word {word.id} in language {language}")
-            return None
-        
-        return translation.value
+        return {
+            "word_id": selected_word.id,
+            "word_key": selected_word.key,
+            "word_value": selected_translation.value,
+            "category_id": selected_word.category_id,
+            "language": language
+        }
 
 
 def assign_roles(
@@ -151,14 +172,16 @@ async def start_game(room: Room, language: str = "es") -> Optional[Room]:
         return None
     
     # Get random word from categories, excluding last word
-    word = await get_random_word(
+    word_data = await get_random_word(
         room.settings.category_ids, 
         language, 
         exclude_word=room.last_word
     )
-    if not word:
+    if not word_data:
         logger.error(f"Could not get word for room {room.id}")
         return None
+    
+    word = word_data["word_value"]
     
     # Assign roles, excluding last impostor/starting player
     updated_players, impostor_id, detective_id, joker_id = assign_roles(
