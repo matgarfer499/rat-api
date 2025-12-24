@@ -1,5 +1,6 @@
 from contextlib import asynccontextmanager
 import asyncio
+import os
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -13,7 +14,7 @@ from src.rooms.router import router as rooms_router
 from src.redis.client import redis_client
 from src.sockets.redis_listener import redis_listener
 from src.logging_config import setup_logging, get_logger
-from src.seed import seed_if_empty
+from src.seed import seed_if_empty, seed_database
 
 # Initialize logging
 setup_logging()
@@ -47,10 +48,11 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# Configure CORS - Allow all origins for development/ngrok
+# Configure CORS - Only allow specific origins
+cors_origins = os.getenv("CORS_ORIGINS", "http://localhost:3000").split(",")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
